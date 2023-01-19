@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# This node uses in parts code shared by Evan Flynn and Lucas Walter
+# This node partially uses code shared by Evan Flynn and Lucas Walter
 # with the following license.
 #
 # Copyright 2021 Evan Flynn, Lucas Walter
@@ -31,11 +31,11 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-import rclpy  # Python Client Library for ROS 2
-from rclpy.node import Node  # Handles the creation of nodes
-from sensor_msgs.msg import Image  # Image is the message type
-from cv_bridge import CvBridge  # ROS2 package to convert between ROS and OpenCV Images
-import cv2  # Python OpenCV library
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from geometry_msgs.msg import Twist
+import cv2
 import numpy as np
 
 
@@ -46,12 +46,14 @@ class ExamineImage(Node):
         self.subscription = self.create_subscription(
             Image, "image_raw", self.image_callback, 100
         )
+        self.publisher = self.create_publisher(Twist, "cmd_vel", 100)
         self.subscription
         self.point = None
         self.mat = None
+        self.image_size = None
 
     def image_callback(self, image_data):
-        image_size = (image_data.height, image_data.width)
+        self.image_size = (image_data.height, image_data.width)
 
         if image_data.encoding == "rgb8":
             dirty = (
@@ -67,12 +69,12 @@ class ExamineImage(Node):
                     [image_data.height, image_data.width, 3], dtype=np.uint8
                 )
 
-            self.mat[:, :, 2] = np.array(image_data.data[0::3]).reshape(image_size)
-            self.mat[:, :, 1] = np.array(image_data.data[1::3]).reshape(image_size)
-            self.mat[:, :, 0] = np.array(image_data.data[2::3]).reshape(image_size)
+            self.mat[:, :, 2] = np.array(image_data.data[0::3]).reshape(self.image_size)
+            self.mat[:, :, 1] = np.array(image_data.data[1::3]).reshape(self.image_size)
+            self.mat[:, :, 0] = np.array(image_data.data[2::3]).reshape(self.image_size)
 
         elif image_data.encoding == "mono8":
-            self.mat = np.array(image_data.data).reshape(image_size)
+            self.mat = np.array(image_data.data).reshape(self.image_size)
 
         if self.point is not None:
             cv2.rectangle(
@@ -92,8 +94,13 @@ class ExamineImage(Node):
     def draw_rectangle(self, event, x, y, flags, param):
         self.point = (x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
-            print(x, y)  # check if mouse event is click
-        
+            msg = Twist()
+            if y > self.image_size[0] / 2:
+                msg.linear.x = -0.5
+            else:
+                msg.linear.x = 0.5
+
+            self.publisher.publish(msg)
 
 
 def main(args=None):
