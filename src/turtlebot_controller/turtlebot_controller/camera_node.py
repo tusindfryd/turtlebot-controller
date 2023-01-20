@@ -1,42 +1,34 @@
-#!/usr/bin/env python3
-
-# This node partially uses code shared by Evan Flynn and Lucas Walter
-# with the following license.
-#
-# Copyright 2021 Evan Flynn, Lucas Walter
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-#    * Redistributions of source code must retain the above copyright
-#      notice, this list of conditions and the following disclaimer.
-#
-#    * Redistributions in binary form must reproduce the above copyright
-#      notice, this list of conditions and the following disclaimer in the
-#      documentation and/or other materials provided with the distribution.
-#
-#    * Neither the name of the Evan Flynn nor the names of its
-#      contributors may be used to endorse or promote products derived from
-#      this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Twist
 import cv2
+from cv_bridge import CvBridge
 import numpy as np
+
+# ARUCO_DICT = {
+#     "DICT_4X4_50": cv2.aruco.DICT_4X4_50,
+#     "DICT_4X4_100": cv2.aruco.DICT_4X4_100,
+#     "DICT_4X4_250": cv2.aruco.DICT_4X4_250,
+#     "DICT_4X4_1000": cv2.aruco.DICT_4X4_1000,
+#     "DICT_5X5_50": cv2.aruco.DICT_5X5_50,
+#     "DICT_5X5_100": cv2.aruco.DICT_5X5_100,
+#     "DICT_5X5_250": cv2.aruco.DICT_5X5_250,
+#     "DICT_5X5_1000": cv2.aruco.DICT_5X5_1000,
+#     "DICT_6X6_50": cv2.aruco.DICT_6X6_50,
+#     "DICT_6X6_100": cv2.aruco.DICT_6X6_100,
+#     "DICT_6X6_250": cv2.aruco.DICT_6X6_250,
+#     "DICT_6X6_1000": cv2.aruco.DICT_6X6_1000,
+#     "DICT_7X7_50": cv2.aruco.DICT_7X7_50,
+#     "DICT_7X7_100": cv2.aruco.DICT_7X7_100,
+#     "DICT_7X7_250": cv2.aruco.DICT_7X7_250,
+#     "DICT_7X7_1000": cv2.aruco.DICT_7X7_1000,
+#     "DICT_ARUCO_ORIGINAL": cv2.aruco.DICT_ARUCO_ORIGINAL,
+#     "DICT_APRILTAG_16h5": cv2.aruco.DICT_APRILTAG_16h5,
+#     "DICT_APRILTAG_25h9": cv2.aruco.DICT_APRILTAG_25h9,
+#     "DICT_APRILTAG_36h10": cv2.aruco.DICT_APRILTAG_36h10,
+#     "DICT_APRILTAG_36h11": cv2.aruco.DICT_APRILTAG_36h11,
+# }
 
 
 class ExamineImage(Node):
@@ -49,49 +41,38 @@ class ExamineImage(Node):
         self.publisher = self.create_publisher(Twist, "cmd_vel", 100)
         self.subscription
         self.point = None
-        self.mat = None
+        self.image = None
         self.image_size = None
+        self.dictionary = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_100)
+        self.parameters = cv2.aruco.DetectorParameters_create()
 
     def image_callback(self, image_data):
-        self.image_size = (image_data.height, image_data.width)
-
-        if image_data.encoding == "rgb8":
-            dirty = (
-                self.mat is None
-                or image_data.width != self.mat.shape[1]
-                or image_data.height != self.mat.shape[0]
-                or len(self.mat.shape) < 2
-                or self.mat.shape[2] != 3
-            )
-
-            if dirty:
-                self.mat = np.zeros(
-                    [image_data.height, image_data.width, 3], dtype=np.uint8
-                )
-
-            self.mat[:, :, 2] = np.array(image_data.data[0::3]).reshape(self.image_size)
-            self.mat[:, :, 1] = np.array(image_data.data[1::3]).reshape(self.image_size)
-            self.mat[:, :, 0] = np.array(image_data.data[2::3]).reshape(self.image_size)
-
-        elif image_data.encoding == "mono8":
-            self.mat = np.array(image_data.data).reshape(self.image_size)
+        self.image = CvBridge().imgmsg_to_cv2(image_data, "bgr8")
 
         if self.point is not None:
             cv2.rectangle(
-                self.mat,
+                self.image,
                 (self.point[0] - 100, self.point[1] - 100),
                 (self.point[0] + 100, self.point[1] + 100),
                 (0, 255, 0),
                 3,
             )
 
-        cv2.setMouseCallback(self.window_name, self.draw_rectangle)
+        cv2.setMouseCallback(self.window_name, self.handle_pointer)
 
-        if self.mat is not None:
-            cv2.imshow(self.window_name, self.mat)
-            cv2.waitKey(5)
+        markerCorners, markerIds, rejectedCandidates = cv2.aruco.detectMarkers(
+            self.image, self.dictionary, parameters=self.parameters
+        )
 
-    def draw_rectangle(self, event, x, y, flags, param):
+        self.image = self.handle_aruco(
+            markerCorners, markerIds, rejectedCandidates, self.image
+        )
+
+        if self.image is not None:
+            cv2.imshow(self.window_name, self.image)
+            cv2.waitKey(10)
+
+    def handle_pointer(self, event, x, y, flags, param):
         self.point = (x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
             msg = Twist()
@@ -101,6 +82,21 @@ class ExamineImage(Node):
                 msg.linear.x = 0.5
 
             self.publisher.publish(msg)
+
+    def handle_aruco(self, corners, ids, rejected, image):
+        if corners:
+            ids = ids.flatten()
+
+            for (markerCorner, markerID) in zip(corners, ids):
+                corners = np.array(markerCorner, np.int32)
+                (topLeft, topRight, bottomRight, bottomLeft) = corners.reshape((4, 2))
+                cv2.polylines(image, [corners], True, (0, 255, 0), 2)
+
+                cX = int((topLeft[0] + bottomRight[0]) / 2.0)
+                cY = int((topLeft[1] + bottomRight[1]) / 2.0)
+                cv2.circle(image, (cX, cY), 4, (0, 255, 0), -1)
+
+        return image
 
 
 def main(args=None):

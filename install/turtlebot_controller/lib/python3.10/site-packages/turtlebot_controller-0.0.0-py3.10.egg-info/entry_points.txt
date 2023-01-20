@@ -1,3 +1,0 @@
-[console_scripts]
-camera_node = turtlebot_controller.camera_node:main
-
