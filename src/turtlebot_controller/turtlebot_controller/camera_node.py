@@ -48,6 +48,7 @@ class ExamineImage(Node):
 
     def image_callback(self, image_data):
         self.image = CvBridge().imgmsg_to_cv2(image_data, "bgr8")
+        self.image_size = (image_data.height, image_data.width)
 
         if self.point is not None:
             cv2.rectangle(
@@ -90,11 +91,19 @@ class ExamineImage(Node):
             for (markerCorner, markerID) in zip(corners, ids):
                 corners = np.array(markerCorner, np.int32)
                 (topLeft, topRight, bottomRight, bottomLeft) = corners.reshape((4, 2))
-                cv2.polylines(image, [corners], True, (0, 255, 0), 2)
+                cv2.polylines(image, [corners], True, (0, 0, 255), 2)
 
                 cX = int((topLeft[0] + bottomRight[0]) / 2.0)
                 cY = int((topLeft[1] + bottomRight[1]) / 2.0)
-                cv2.circle(image, (cX, cY), 4, (0, 255, 0), -1)
+                cv2.circle(image, (cX, cY), 4, (0, 0, 255), -1)
+
+                msg = Twist()
+                if cY > self.image_size[0] / 2:
+                    msg.linear.x = -0.5
+                else:
+                    msg.linear.x = 0.5
+
+                self.publisher.publish(msg)
 
         return image
 
